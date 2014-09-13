@@ -1,13 +1,11 @@
 package me.kobosil;
 
 
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
+import com.scireum.open.xml.NodeHandler;
+import com.scireum.open.xml.StructuredNode;
+import com.scireum.open.xml.XMLReader;
+import me.kobosil.Models.CamEntry;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -25,7 +23,7 @@ public class main {
     public static final Logger LOGGER = Logger.getLogger("Spymap");
 
     public static void main(String args[]) {
-        MySQL sql = new MySQL();
+        final MySQL sql = new MySQL();
         // http://download.geofabrik.de/
         if (!new File("config.prop").exists()) {
             writeToFile("host=xxx");
@@ -34,42 +32,60 @@ public class main {
             writeToFile("user=xxx");
             writeToFile("password=xxx");
             writeToFile("xml_file=berlin-latest.osm");
-            writeToFile("logFile=pinger.log");
+            writeToFile("logFile=last.log");
             writeToFile("loggerLevel=INFO");
         }
-        HashMap<String, String> conf = loadConfig();
+        final HashMap<String, String> conf = loadConfig();
         initLog(conf);
         try {
-            File stocks = new File(conf.get("xml_file"));
-            DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
-            Document doc = dBuilder.parse(stocks);
-            doc.getDocumentElement().normalize();
-
-            System.out.println("root of xml file" + doc.getDocumentElement().getNodeName());
-            NodeList nodes = doc.getElementsByTagName("stock");
-            System.out.println("==========================");
-
-            for (int i = 0; i < nodes.getLength(); i++) {
-                Node node = nodes.item(i);
-
-                if (node.getNodeType() == Node.ELEMENT_NODE) {
-                    Element element = (Element) node;
-                    System.out.println("Stock Symbol: " + getValue("symbol", element));
-                    System.out.println("Stock Price: " + getValue("price", element));
-                    System.out.println("Stock Quantity: " + getValue("quantity", element));
-                }
+            while (!sql.isConnected()) {
+                sql.connect(conf.get("host"), Integer.parseInt(conf.get("port")), conf.get("database"), conf.get("user"), conf.get("password"));
             }
+            XMLReader r = new XMLReader();
+            r.addHandler("node", new NodeHandler() {
+
+                @Override
+                public void process(StructuredNode node) {
+                    try {
+                        HashMap<String, String> tags = new HashMap<String, String>();
+                        for (StructuredNode tag : node.queryNodeList("tag")) {
+                            tags.put(tag.queryString("@k"), tag.queryString("@v"));
+                        }
+                        if (tags.values().contains("surveillance") || tags.keySet().contains("surveillance")) {
+                            long id = Long.parseLong(node.queryString("@id"));
+                            Double lat = Double.parseDouble(node.queryString("@lat"));
+                            Double lon = Double.parseDouble(node.queryString("@lon"));
+                            CamEntry cam = new CamEntry(id, lat, lon, tags);
+                            LOGGER.info(cam.toString());
+                            while (!sql.isConnected()) {
+                                sql.connect(conf.get("host"), Integer.parseInt(conf.get("port")), conf.get("database"), conf.get("user"), conf.get("password"));
+                            }
+                            sql.insertCam(cam);
+                        }
+
+
+                    /*    for(StructuredNode tag : node.queryNodeList("tag"))
+                    System.out.println(tag.);
+                    System.out.println(node.queryValue("price").asDouble(0d));*/
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+                }
+            });
+
+            r.parse(new FileInputStream(conf.get("xml_file")));
+
+
         } catch (Exception ex) {
             ex.printStackTrace();
         }
     }
 
-    private static String getValue(String tag, Element element) {
+    /*private static String getValue(String tag, Element element) {
         NodeList nodes = element.getElementsByTagName(tag).item(0).getChildNodes();
         Node node = (Node) nodes.item(0);
         return node.getNodeValue();
-    }
+    }*/
 
     public static void initLog(HashMap<String, String> conf) {
         try {
